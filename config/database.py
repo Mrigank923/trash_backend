@@ -5,6 +5,7 @@ import psycopg
 from contextlib import contextmanager
 from config.settings import settings
 import logging
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
