@@ -5,6 +5,8 @@ import psycopg
 from contextlib import contextmanager
 from config.settings import settings
 import logging
+from models import row_to_dict, rows_to_dict_list
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +31,18 @@ def get_db():
             conn.close()
 
 def execute_query(query, params=None, fetch=False):
-    """Execute a query and optionally fetch results."""
+    """Execute a query and optionally fetch results as dicts."""
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(query, params or {})
+
             if fetch:
-                return cur.fetchall() if fetch == 'all' else cur.fetchone()
+                if fetch == 'one':
+                    row = cur.fetchone()
+                    return row_to_dict(cur, row)
+                elif fetch == 'all':
+                    rows = cur.fetchall()
+                    return rows_to_dict_list(cur, rows)
             return cur.rowcount
 
 def create_tables():
