@@ -1,8 +1,7 @@
 """
 Simple PostgreSQL database configuration
 """
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
 from contextlib import contextmanager
 from config.settings import settings
 import logging
@@ -11,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 def get_connection():
     """Get database connection."""
-    return psycopg2.connect(settings.DATABASE_URL)
+    return psycopg.connect(settings.DATABASE_URL)
 
 @contextmanager
 def get_db():
@@ -32,7 +31,7 @@ def get_db():
 def execute_query(query, params=None, fetch=False):
     """Execute a query and optionally fetch results."""
     with get_db() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute(query, params or {})
             if fetch:
                 return cur.fetchall() if fetch == 'all' else cur.fetchone()
