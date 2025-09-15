@@ -5,7 +5,7 @@ import psycopg
 from contextlib import contextmanager
 from config.settings import settings
 import logging
-from models import row_to_dict, rows_to_dict_list
+from ../models/database import row_to_dict, rows_to_dict_list
 
 
 logger = logging.getLogger(__name__)
