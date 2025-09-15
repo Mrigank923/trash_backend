@@ -2,31 +2,25 @@
 Waste controller for waste data operations
 """
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
-
-from models.database import WasteData, Device, User, Rewards
-from models.schemas import WasteUpload, WasteDataResponse
-from helpers.utils import calculate_reward_points, validate_weights
+from models.database import WasteData, Device, User, execute_query
 
 class WasteController:
     
     @staticmethod
-    def upload_waste_data(waste_data: WasteUpload, db: Session) -> WasteDataResponse:
+    def upload_waste_data(device_id: str, user_qr: str, organic: float, recyclable: float, hazardous: float):
         """Upload waste data from scanning devices."""
         # Validate device exists and is active
-        device = db.query(Device).filter(
-            Device.device_id == waste_data.device_id,
-            Device.is_active == True
-        ).first()
+        device = Device.get_by_device_id(device_id)
         
-        if not device:
+        if not device or not device['is_active']:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Device not found or inactive"
             )
         
         # Find user by QR code
-        user = db.query(User).filter(User.qr_code == waste_data.user_qr).first()
+        user_query = "SELECT * FROM users WHERE qr_code = %(qr_code)s"
+        user = execute_query(user_query, {'qr_code': user_qr}, fetch='one')
         
         if not user:
             raise HTTPException(
@@ -35,73 +29,68 @@ class WasteController:
             )
         
         # Validate waste weights
-        if not validate_weights(waste_data.organic, waste_data.recyclable, waste_data.hazardous):
+        if organic < 0 or recyclable < 0 or hazardous < 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Waste weights must be non-negative"
             )
         
         # Create waste data entry
-        db_waste = WasteData(
-            user_id=user.id,
-            device_id=device.id,
-            organic_weight=waste_data.organic,
-            recyclable_weight=waste_data.recyclable,
-            hazardous_weight=waste_data.hazardous
+        waste_data = WasteData.create(
+            user_id=user['id'],
+            device_id=device['id'],
+            organic_weight=organic,
+            recyclable_weight=recyclable,
+            hazardous_weight=hazardous
         )
         
-        db.add(db_waste)
-        db.commit()
-        db.refresh(db_waste)
-        
-        # Calculate and award points
-        points_breakdown = calculate_reward_points(
-            waste_data.organic, 
-            waste_data.recyclable, 
-            waste_data.hazardous
-        )
-        
-        total_points = points_breakdown["total_points"]
+        # Calculate and award points (simple calculation)
+        organic_points = int(organic * 2)  # 2 points per kg of organic
+        recyclable_points = int(recyclable * 3)  # 3 points per kg of recyclable
+        hazardous_points = int(hazardous * 5)  # 5 points per kg of hazardous
+        total_points = organic_points + recyclable_points + hazardous_points
         
         if total_points > 0:
             # Add individual reward entries for each waste type
-            if waste_data.organic > 0:
-                organic_reward = Rewards(
-                    user_id=user.id,
-                    points=points_breakdown["organic_points"],
-                    waste_type="organic",
-                    weight=waste_data.organic
-                )
-                db.add(organic_reward)
+            if organic > 0:
+                reward_query = """
+                INSERT INTO rewards (user_id, points, waste_type, weight)
+                VALUES (%(user_id)s, %(points)s, %(waste_type)s, %(weight)s)
+                """
+                execute_query(reward_query, {
+                    'user_id': user['id'],
+                    'points': organic_points,
+                    'waste_type': 'organic',
+                    'weight': organic
+                })
             
-            if waste_data.recyclable > 0:
-                recyclable_reward = Rewards(
-                    user_id=user.id,
-                    points=points_breakdown["recyclable_points"],
-                    waste_type="recyclable",
-                    weight=waste_data.recyclable
-                )
-                db.add(recyclable_reward)
+            if recyclable > 0:
+                execute_query(reward_query, {
+                    'user_id': user['id'],
+                    'points': recyclable_points,
+                    'waste_type': 'recyclable',
+                    'weight': recyclable
+                })
             
-            if waste_data.hazardous > 0:
-                hazardous_reward = Rewards(
-                    user_id=user.id,
-                    points=points_breakdown["hazardous_points"],
-                    waste_type="hazardous",
-                    weight=waste_data.hazardous
-                )
-                db.add(hazardous_reward)
+            if hazardous > 0:
+                execute_query(reward_query, {
+                    'user_id': user['id'],
+                    'points': hazardous_points,
+                    'waste_type': 'hazardous',
+                    'weight': hazardous
+                })
             
             # Update user's total rewards
-            user.rewards += total_points
-            db.commit()
+            update_rewards_query = "UPDATE users SET rewards = rewards + %(points)s WHERE id = %(user_id)s"
+            execute_query(update_rewards_query, {'points': total_points, 'user_id': user['id']})
         
-        return db_waste
+        return waste_data
     
     @staticmethod
-    def get_waste_data_by_id(waste_id: int, db: Session) -> WasteDataResponse:
+    def get_waste_data_by_id(waste_id: int):
         """Get waste data by ID."""
-        waste_data = db.query(WasteData).filter(WasteData.id == waste_id).first()
+        query = "SELECT * FROM waste_data WHERE id = %(id)s"
+        waste_data = execute_query(query, {'id': waste_id}, fetch='one')
         if not waste_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

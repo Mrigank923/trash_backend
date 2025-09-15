@@ -5,11 +5,11 @@ import os
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
-from config.database import create_tables, get_db
-from config.settings import settings
-from models.database import User, UserRole
+from config.database import create_tables
+from models.database import User
 from helpers.auth import get_password_hash
 from middlewares.cors import add_cors_middleware
+from config.settings import settings
 
 # Import routes
 from routes.auth import router as auth_router
@@ -20,33 +20,30 @@ from routes.waste import router as waste_router
 
 def create_admin_user():
     """Create default admin user if it doesn't exist."""
-    db = next(get_db())
     try:
-        admin_user = db.query(User).filter(User.role == UserRole.admin).first()
+        # Check if admin user exists
+        admin_user = User.get_by_email("admin@wastemanagement.com")
+        
         if not admin_user:
             # Use environment variable for admin password or generate a secure one
             admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
             admin_email = os.getenv("ADMIN_EMAIL", "admin@wastemanagement.com")
             
-            admin = User(
+            User.create(
                 name="Admin",
                 email=admin_email,
                 phone_no=os.getenv("ADMIN_PHONE", "+1234567890"),
                 password=get_password_hash(admin_password),
-                role=UserRole.admin,
-                qr_code=None,
-                rewards=0,
-                is_email_verified=True  # Admin doesn't need email verification
+                role="admin",
+                is_email_verified=True
             )
-            db.add(admin)
-            db.commit()
+            
             print(f"✅ Admin user created: {admin_email} / {admin_password}")
             if admin_password == "admin123":
                 print("⚠️  WARNING: Using default admin password. Please change it!")
+                        
     except Exception as e:
         print(f"❌ Error creating admin user: {e}")
-    finally:
-        db.close()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

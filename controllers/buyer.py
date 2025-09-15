@@ -1,66 +1,64 @@
 """
 Buyer controller for buyer-specific operations
 """
-from typing import List
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-
-from models.database import WasteData, User
+from models.database import execute_query
 
 class BuyerController:
     
     @staticmethod
-    def get_available_recyclables(db: Session) -> List[dict]:
+    def get_available_recyclables():
         """Get available recyclable waste data for buyers."""
         # Get recyclable waste data with user information
-        recyclables = db.query(
-            WasteData.id,
-            WasteData.recyclable_weight,
-            WasteData.timestamp,
-            User.name.label("user_name"),
-            User.email.label("user_email")
-        ).join(User).filter(
-            WasteData.recyclable_weight > 0
-        ).order_by(WasteData.timestamp.desc()).all()
+        query = """
+        SELECT 
+            wd.id as waste_id,
+            wd.recyclable_weight,
+            wd.timestamp,
+            u.name as user_name,
+            u.email as user_email
+        FROM waste_data wd
+        JOIN users u ON wd.user_id = u.id
+        WHERE wd.recyclable_weight > 0
+        ORDER BY wd.timestamp DESC
+        """
         
-        result = []
-        for recyclable in recyclables:
-            result.append({
-                "waste_id": recyclable.id,
-                "recyclable_weight": recyclable.recyclable_weight,
-                "timestamp": recyclable.timestamp,
-                "user_name": recyclable.user_name,
-                "user_email": recyclable.user_email
-            })
-        
-        return result
+        return execute_query(query, fetch='all')
     
     @staticmethod
-    def get_recyclable_stats(db: Session) -> dict:
+    def get_recyclable_stats():
         """Get recyclable waste statistics."""
-        total_recyclable = db.query(func.sum(WasteData.recyclable_weight)).scalar() or 0
-        total_entries = db.query(WasteData).filter(WasteData.recyclable_weight > 0).count()
+        # Get total recyclable weight
+        total_query = """
+        SELECT 
+            COALESCE(SUM(recyclable_weight), 0) as total_recyclable,
+            COUNT(*) as total_entries
+        FROM waste_data 
+        WHERE recyclable_weight > 0
+        """
+        totals = execute_query(total_query, fetch='one')
         
-        # Get recyclable waste by month
-        monthly_data = db.query(
-            func.date_trunc('month', WasteData.timestamp).label('month'),
-            func.sum(WasteData.recyclable_weight).label('total_weight')
-        ).filter(
-            WasteData.recyclable_weight > 0
-        ).group_by(
-            func.date_trunc('month', WasteData.timestamp)
-        ).order_by('month').all()
+        # Get monthly statistics
+        monthly_query = """
+        SELECT 
+            DATE_TRUNC('month', timestamp) as month,
+            SUM(recyclable_weight) as total_weight
+        FROM waste_data 
+        WHERE recyclable_weight > 0
+        GROUP BY DATE_TRUNC('month', timestamp)
+        ORDER BY month
+        """
+        monthly_data = execute_query(monthly_query, fetch='all')
         
         monthly_stats = [
             {
-                "month": month.strftime("%Y-%m"),
-                "total_weight": float(total_weight)
+                "month": row['month'].strftime("%Y-%m"),
+                "total_weight": float(row['total_weight'])
             }
-            for month, total_weight in monthly_data
+            for row in monthly_data
         ]
         
         return {
-            "total_recyclable_weight": float(total_recyclable),
-            "total_entries": total_entries,
+            "total_recyclable_weight": float(totals['total_recyclable']),
+            "total_entries": totals['total_entries'],
             "monthly_stats": monthly_stats
         }

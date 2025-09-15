@@ -1,95 +1,104 @@
 """
 Admin controller for administrative operations
 """
-from typing import List
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
-from sqlalchemy import func
 
-from models.database import User, Device, WasteData, UserRole, Rewards, OTPVerification
-from models.schemas import DeviceCreate, DeviceResponse, WasteOverview, UserResponse
-from helpers.utils import generate_device_api_key
+from models.database import User, Device, WasteData, execute_query
+from helpers.device import generate_device_api_key
 
 class AdminController:
     
     @staticmethod
-    def get_waste_overview(db: Session) -> WasteOverview:
+    def get_waste_overview():
         """Get overall waste management statistics."""
         # Calculate total weights
-        total_organic = db.query(func.sum(WasteData.organic_weight)).scalar() or 0
-        total_recyclable = db.query(func.sum(WasteData.recyclable_weight)).scalar() or 0
-        total_hazardous = db.query(func.sum(WasteData.hazardous_weight)).scalar() or 0
+        total_organic_query = "SELECT COALESCE(SUM(organic_weight), 0) FROM waste_data"
+        total_recyclable_query = "SELECT COALESCE(SUM(recyclable_weight), 0) FROM waste_data"
+        total_hazardous_query = "SELECT COALESCE(SUM(hazardous_weight), 0) FROM waste_data"
+        
+        total_organic = execute_query(total_organic_query, fetch='one')['coalesce']
+        total_recyclable = execute_query(total_recyclable_query, fetch='one')['coalesce']
+        total_hazardous = execute_query(total_hazardous_query, fetch='one')['coalesce']
         
         # Count entities
-        total_users = db.query(User).filter(User.role == UserRole.normal_user).count()
-        total_devices = db.query(Device).count()
-        total_waste_entries = db.query(WasteData).count()
+        total_users = execute_query("SELECT COUNT(*) FROM users WHERE role = 'normal_user'", fetch='one')['count']
+        total_devices = execute_query("SELECT COUNT(*) FROM devices", fetch='one')['count']
+        total_waste_entries = execute_query("SELECT COUNT(*) FROM waste_data", fetch='one')['count']
         
-        return WasteOverview(
-            total_organic=float(total_organic),
-            total_recyclable=float(total_recyclable),
-            total_hazardous=float(total_hazardous),
-            total_users=total_users,
-            total_devices=total_devices,
-            total_waste_entries=total_waste_entries
-        )
+        return {
+            "total_organic": float(total_organic),
+            "total_recyclable": float(total_recyclable),
+            "total_hazardous": float(total_hazardous),
+            "total_users": total_users,
+            "total_devices": total_devices,
+            "total_waste_entries": total_waste_entries
+        }
     
     @staticmethod
-    def get_all_users(db: Session) -> List[UserResponse]:
+    def get_all_users():
         """Get all users in the system."""
-        users = db.query(User).all()
-        return users
+        return User.get_all()
     
     @staticmethod
-    def get_all_devices(db: Session) -> List[DeviceResponse]:
+    def get_all_devices():
         """Get all registered devices."""
-        devices = db.query(Device).all()
-        return devices
+        query = "SELECT * FROM devices ORDER BY created_at DESC"
+        return execute_query(query, fetch='all')
     
     @staticmethod
-    def register_device(device_data: DeviceCreate, db: Session) -> DeviceResponse:
+    def register_device(device_id: str, api_key: str = None):
         """Register a new device."""
         # Check if device already exists
-        existing_device = db.query(Device).filter(Device.device_id == device_data.device_id).first()
+        existing_device = Device.get_by_device_id(device_id)
         if existing_device:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Device already registered"
             )
         
+        # Generate API key if not provided
+        if not api_key:
+            api_key = generate_device_api_key()
+        
         # Create new device
-        db_device = Device(
-            device_id=device_data.device_id,
-            api_key=device_data.api_key,
-            is_active=True
-        )
+        query = """
+        INSERT INTO devices (device_id, api_key, is_active)
+        VALUES (%(device_id)s, %(api_key)s, %(is_active)s)
+        RETURNING *
+        """
+        params = {
+            'device_id': device_id,
+            'api_key': api_key,
+            'is_active': True
+        }
+        device = execute_query(query, params, fetch='one')
         
-        db.add(db_device)
-        db.commit()
-        db.refresh(db_device)
-        
-        return db_device
+        # Return device info including API key (only shown once during registration)
+        return {
+            "device_id": device['device_id'],
+            "api_key": api_key,
+            "is_active": device['is_active'],
+            "created_at": device['created_at'],
+            "message": "Device registered successfully. Save the API key securely - it won't be shown again."
+        }
     
     @staticmethod
-    def deactivate_device(device_id: str, db: Session) -> DeviceResponse:
+    def deactivate_device(device_id: str):
         """Deactivate a device."""
-        device = db.query(Device).filter(Device.device_id == device_id).first()
+        device = Device.get_by_device_id(device_id)
         if not device:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Device not found"
             )
         
-        device.is_active = False
-        db.commit()
-        db.refresh(device)
-        
-        return device
+        query = "UPDATE devices SET is_active = FALSE WHERE device_id = %(device_id)s RETURNING *"
+        return execute_query(query, {'device_id': device_id}, fetch='one')
     
     @staticmethod
-    def get_user_by_id(user_id: int, db: Session) -> UserResponse:
+    def get_user_by_id(user_id: int):
         """Get user by ID."""
-        user = db.query(User).filter(User.id == user_id).first()
+        user = User.get_by_id(user_id)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -98,34 +107,23 @@ class AdminController:
         return user
     
     @staticmethod
-    def delete_user(user_id: int, db: Session) -> dict:
+    def delete_user(user_id: int):
         """Delete a user (admin only)."""
-        user = db.query(User).filter(User.id == user_id).first()
+        user = User.get_by_id(user_id)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
             )
         
-        if user.role == UserRole.admin:
+        if user['role'] == 'admin':
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot delete admin user"
             )
         
-        # Delete related records first to avoid foreign key constraint violations
-        
-        # Delete OTP verifications
-        db.query(OTPVerification).filter(OTPVerification.user_id == user_id).delete()
-        
-        # Delete rewards
-        db.query(Rewards).filter(Rewards.user_id == user_id).delete()
-        
-        # Delete waste data
-        db.query(WasteData).filter(WasteData.user_id == user_id).delete()
-        
-        # Finally delete the user
-        db.delete(user)
-        db.commit()
+        # Delete the user (foreign key constraints will handle related records)
+        query = "DELETE FROM users WHERE id = %(user_id)s"
+        execute_query(query, {'user_id': user_id})
         
         return {"message": "User deleted successfully"}

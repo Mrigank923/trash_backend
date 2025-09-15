@@ -1,31 +1,100 @@
 """
-Database configuration and connection setup
+Simple PostgreSQL database configuration
 """
-import os
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from dotenv import load_dotenv
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from contextlib import contextmanager
+from config.settings import settings
+import logging
 
-# Load environment variables
-load_dotenv()
+logger = logging.getLogger(__name__)
 
-# Database URL from environment
-DATABASE_URL = os.getenv("DATABASE_URL")
+def get_connection():
+    """Get database connection."""
+    return psycopg2.connect(settings.DATABASE_URL)
 
-# SQLAlchemy setup
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
+@contextmanager
 def get_db():
-    """Dependency to get database session"""
-    db = SessionLocal()
+    """Database context manager."""
+    conn = None
     try:
-        yield db
+        conn = get_connection()
+        yield conn
+        conn.commit()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise e
     finally:
-        db.close()
+        if conn:
+            conn.close()
+
+def execute_query(query, params=None, fetch=False):
+    """Execute a query and optionally fetch results."""
+    with get_db() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(query, params or {})
+            if fetch:
+                return cur.fetchall() if fetch == 'all' else cur.fetchone()
+            return cur.rowcount
 
 def create_tables():
-    """Create all database tables"""
-    Base.metadata.create_all(bind=engine)
+    """Create database tables."""
+    tables_sql = """
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        phone_no VARCHAR(20) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        role VARCHAR(50) NOT NULL CHECK (role IN ('normal_user', 'buyer', 'admin')),
+        qr_code VARCHAR(255) UNIQUE,
+        rewards INTEGER DEFAULT 0,
+        is_email_verified BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS otp_verifications (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        email VARCHAR(255) NOT NULL,
+        otp_code VARCHAR(10) NOT NULL,
+        is_used BOOLEAN DEFAULT FALSE,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS devices (
+        id SERIAL PRIMARY KEY,
+        device_id VARCHAR(255) UNIQUE NOT NULL,
+        api_key VARCHAR(255) NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS waste_data (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        device_id INTEGER REFERENCES devices(id) ON DELETE CASCADE,
+        organic_weight DECIMAL(10,2) DEFAULT 0.0,
+        recyclable_weight DECIMAL(10,2) DEFAULT 0.0,
+        hazardous_weight DECIMAL(10,2) DEFAULT 0.0,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS rewards (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        points INTEGER NOT NULL,
+        waste_type VARCHAR(50) NOT NULL,
+        weight DECIMAL(10,2) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """
+    
+    try:
+        execute_query(tables_sql)
+        logger.info("✅ Database tables created successfully!")
+    except Exception as e:
+        logger.error(f"❌ Error creating tables: {e}")
+        raise

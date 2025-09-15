@@ -1,26 +1,28 @@
 """
 User controller for user-specific operations
 """
-from typing import List
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
-
-from models.database import User, WasteData, Rewards
-from models.schemas import WasteDataResponse, RewardResponse, QRCodeResponse
+from models.database import User, WasteData, execute_query
 
 class UserController:
     
     @staticmethod
-    def get_waste_history(user: User, db: Session) -> List[WasteDataResponse]:
+    def get_waste_history(user_id: int):
         """Get user's waste upload history."""
-        waste_data = db.query(WasteData).filter(WasteData.user_id == user.id).order_by(WasteData.timestamp.desc()).all()
-        return waste_data
+        return WasteData.get_by_user(user_id)
     
     @staticmethod
-    def get_user_rewards(user: User, db: Session) -> dict:
+    def get_user_rewards(user_id: int):
         """Get user's total rewards and reward history."""
-        total_rewards = user.rewards
-        reward_history = db.query(Rewards).filter(Rewards.user_id == user.id).order_by(Rewards.created_at.desc()).all()
+        user = User.get_by_id(user_id)
+        total_rewards = user['rewards']
+        
+        reward_history_query = """
+        SELECT * FROM rewards 
+        WHERE user_id = %(user_id)s 
+        ORDER BY created_at DESC
+        """
+        reward_history = execute_query(reward_history_query, {'user_id': user_id}, fetch='all')
         
         return {
             "total_rewards": total_rewards,
@@ -28,31 +30,44 @@ class UserController:
         }
     
     @staticmethod
-    def get_qr_code(user: User) -> QRCodeResponse:
+    def get_qr_code(user_id: int):
         """Get user's QR code."""
-        if not user.qr_code:
+        user = User.get_by_id(user_id)
+        if not user or not user['qr_code']:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="QR code not found for this user"
             )
         
-        return QRCodeResponse(qr_code=user.qr_code, user_id=user.id)
+        return {
+            "qr_code": user['qr_code'], 
+            "user_id": user['id']
+        }
     
     @staticmethod
-    def get_user_stats(user: User, db: Session) -> dict:
+    def get_user_stats(user_id: int):
         """Get user's waste statistics."""
-        waste_data = db.query(WasteData).filter(WasteData.user_id == user.id).all()
+        user = User.get_by_id(user_id)
         
-        total_organic = sum(data.organic_weight for data in waste_data)
-        total_recyclable = sum(data.recyclable_weight for data in waste_data)
-        total_hazardous = sum(data.hazardous_weight for data in waste_data)
-        total_entries = len(waste_data)
+        # Get waste statistics
+        stats_query = """
+        SELECT 
+            COALESCE(SUM(organic_weight), 0) as total_organic,
+            COALESCE(SUM(recyclable_weight), 0) as total_recyclable,
+            COALESCE(SUM(hazardous_weight), 0) as total_hazardous,
+            COUNT(*) as total_entries
+        FROM waste_data 
+        WHERE user_id = %(user_id)s
+        """
+        stats = execute_query(stats_query, {'user_id': user_id}, fetch='one')
+        
+        total_weight = stats['total_organic'] + stats['total_recyclable'] + stats['total_hazardous']
         
         return {
-            "total_organic": total_organic,
-            "total_recyclable": total_recyclable,
-            "total_hazardous": total_hazardous,
-            "total_weight": total_organic + total_recyclable + total_hazardous,
-            "total_entries": total_entries,
-            "total_rewards": user.rewards
+            "total_organic": float(stats['total_organic']),
+            "total_recyclable": float(stats['total_recyclable']),
+            "total_hazardous": float(stats['total_hazardous']),
+            "total_weight": float(total_weight),
+            "total_entries": stats['total_entries'],
+            "total_rewards": user['rewards']
         }
