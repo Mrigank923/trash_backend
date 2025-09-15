@@ -5,14 +5,29 @@ import psycopg
 from contextlib import contextmanager
 from config.settings import settings
 import logging
-from models.database import row_to_dict, rows_to_dict_list
-
 
 logger = logging.getLogger(__name__)
 
 def get_connection():
     """Get database connection."""
     return psycopg.connect(settings.DATABASE_URL)
+
+def row_to_dict(cursor, row) -> Dict[str, Any]:
+    """Convert database row to dictionary."""
+    if row is None:
+        return None
+    
+    columns = [desc[0] for desc in cursor.description]
+    return dict(zip(columns, row))
+
+def rows_to_dict_list(cursor, rows) -> list:
+    """Convert database rows to list of dictionaries."""
+    if not rows:
+        return []
+    
+    columns = [desc[0] for desc in cursor.description]
+    return [dict(zip(columns, row)) for row in rows]
+
 
 @contextmanager
 def get_db():
