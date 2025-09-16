@@ -75,7 +75,7 @@ class UserController:
     @staticmethod
     def get_demo_waste_history(user_id: int):
         """Get user's demo waste upload history with totals."""
-        history = WasteData.get_demo_by_user(user_id)
+        history = WasteData.get_by_user(user_id)
         total_organic = sum(item.get('organic_weight', 0) for item in history)
         total_recyclable = sum(item.get('recyclable_weight', 0) for item in history)
         total_hazardous = sum(item.get('hazardous_weight', 0) for item in history)
