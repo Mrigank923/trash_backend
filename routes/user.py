@@ -13,6 +13,12 @@ def get_waste_history(current_user = Depends(get_current_user)):
     """Get user's waste upload history."""
     return UserController.get_waste_history(current_user['id'])
 
+@router.get("/demowaste")
+def get_demo_waste_history():
+    """Get user's demo waste upload history."""
+    return UserController.get_demo_waste_history(3)
+
+
 @router.get("/rewards")
 def get_user_rewards(current_user = Depends(get_current_user)):
     """Get user's total rewards and reward history."""
