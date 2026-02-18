@@ -284,18 +284,3 @@ class Device:
         FROM waste_data WHERE recyclable_weight > 0
     """
 
-def row_to_dict(cursor, row) -> Dict[str, Any]:
-    """Convert database row to dictionary."""
-    if row is None:
-        return None
-    
-    columns = [desc[0] for desc in cursor.description]
-    return dict(zip(columns, row))
-
-def rows_to_dict_list(cursor, rows) -> list:
-    """Convert database rows to list of dictionaries."""
-    if not rows:
-        return []
-    
-    columns = [desc[0] for desc in cursor.description]
-    return [dict(zip(columns, row)) for row in rows]
